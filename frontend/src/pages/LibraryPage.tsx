@@ -4,6 +4,8 @@ import { api, type Textbook } from "../api";
 import { ErrorBanner, Spinner } from "../components/ui";
 import { useStudent } from "../student";
 
+const ANALYSED = { rules: "offline", local: "by local AI", claude: "by Claude" } as const;
+
 export function TextbookStatus({ book }: { book: Textbook }) {
   if (book.status === "ready") return <span className="pill pill-passed">Ready</span>;
   if (book.status === "failed") return <span className="pill pill-needs_work">Failed</span>;
@@ -108,13 +110,25 @@ export default function LibraryPage() {
                 <div className="grow">
                   {b.status === "ready" ? <Link to={`/library/${b.id}`}><strong>{b.title}</strong></Link> : <strong>{b.title}</strong>}
                   <div className="small muted">
-                    {[b.subject, b.grade && `Grade ${b.grade}`, b.page_count && `${b.page_count} pages`].filter(Boolean).join(" · ") || b.filename}
+                    {[b.subject, b.grade && `Grade ${b.grade}`, b.page_count && `${b.page_count} pages`, b.analysis_mode && `analysed ${ANALYSED[b.analysis_mode]}`].filter(Boolean).join(" · ") || b.filename}
                   </div>
                   {b.status === "failed" && <div className="small error-text">{b.status_detail}</div>}
                 </div>
                 <TextbookStatus book={b} />
                 {b.status === "failed" && (
                   <button className="secondary small" onClick={() => act(() => api.reprocessTextbook(b.id))}>Retry</button>
+                )}
+                {b.status === "ready" && (
+                  <button
+                    className="link small"
+                    title="Analyse the book again with the tutor mode chosen in Settings"
+                    onClick={() =>
+                      confirm(`Re-analyse "${b.title}" with the current tutor mode? The chapters and topics will be rebuilt and progress on this book will be reset.`) &&
+                      act(() => api.reprocessTextbook(b.id))
+                    }
+                  >
+                    Re-analyse
+                  </button>
                 )}
                 {b.status !== "processing" && (
                   <button

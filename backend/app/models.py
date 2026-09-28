@@ -27,6 +27,13 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
 class Student(Base):
     __tablename__ = "students"
 
@@ -55,7 +62,8 @@ class Textbook(Base):
     status_detail: Mapped[str | None] = mapped_column(Text)
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     page_count: Mapped[int] = mapped_column(Integer, default=0)
-    structure_source: Mapped[str | None] = mapped_column(String(30))  # outline | headings | ai
+    structure_source: Mapped[str | None] = mapped_column(String(30))  # outline | headings | ai | rules
+    analysis_mode: Mapped[str | None] = mapped_column(String(20))  # which brain analysed it: rules | local | claude
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     student: Mapped[Student] = relationship(back_populates="textbooks")

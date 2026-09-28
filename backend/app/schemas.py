@@ -64,6 +64,7 @@ class TextbookOut(ORM):
     progress: float
     page_count: int
     structure_source: str | None
+    analysis_mode: str | None
     created_at: datetime
 
 

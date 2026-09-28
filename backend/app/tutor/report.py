@@ -9,9 +9,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..llm import LLMClient, LLMError
+from ..brain.base import TutorBrain
+from ..llm import LLMError
 from ..models import Attempt, DailyLesson, Question, Student, Topic, TutorSession
-from . import knowledge, prompts
+from . import knowledge
 from .context import describe_learner
 
 log = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ def build_report(
     session: TutorSession,
     student: Student,
     state: dict[str, Any],
-    llm: LLMClient,
+    brain: TutorBrain,
     lesson: DailyLesson | None,
 ) -> dict[str, Any]:
     from .engine import get_mastery
@@ -98,11 +99,12 @@ def build_report(
 
     facts = _facts_text(topics_out, overall, test_review)
     try:
-        summary = llm.generate(
-            system=prompts.tutor_system(student.grade),
-            prompt=prompts.summary_prompt(describe_learner(student, None, lesson), facts),
-            schema=prompts.SessionSummary,
-            purpose="summary",
+        summary = brain.summary(
+            learner_desc=describe_learner(student, None, lesson),
+            student_name=student.name,
+            grade=student.grade,
+            facts=facts,
+            report={"overall": overall, "topics": topics_out, "test_review": test_review},
         ).model_dump()
     except LLMError as exc:  # the numbers are what matter; don't lose the session over the prose
         log.warning("summary generation failed: %s", exc)

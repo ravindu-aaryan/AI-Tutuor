@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import Settings
-from ..llm import LLMClient
+from ..brain import MissedQuestion, TopicContext, TutorBrain
 from ..models import Attempt, DailyLesson, Question, SessionMessage, Student, Topic, TopicMastery, TutorSession, utcnow
 from . import knowledge, prompts
 from .context import describe_learner, describe_topic, topic_excerpt
@@ -65,10 +65,10 @@ def get_mastery(db: Session, student_id: int, topic_id: int) -> TopicMastery:
 
 
 class TutorEngine:
-    def __init__(self, db: Session, session: TutorSession, llm: LLMClient, settings: Settings) -> None:
+    def __init__(self, db: Session, session: TutorSession, brain: TutorBrain, settings: Settings) -> None:
         self.db = db
         self.s = session
-        self.llm = llm
+        self.brain = brain
         self.cfg = settings
         self.student: Student = db.get(Student, session.student_id)  # type: ignore[assignment]
         self.lesson: DailyLesson | None = db.get(DailyLesson, session.daily_lesson_id) if session.daily_lesson_id else None
@@ -81,7 +81,7 @@ class TutorEngine:
     def create(
         cls,
         db: Session,
-        llm: LLMClient,
+        brain: TutorBrain,
         settings: Settings,
         *,
         student: Student,
@@ -102,7 +102,7 @@ class TutorEngine:
         )
         db.add(session)
         db.flush()
-        engine = cls(db, session, llm, settings)
+        engine = cls(db, session, brain, settings)
         if len(engine._topics) != len(session.topic_ids):
             raise SessionError("Some of the chosen topics don't exist.")
         engine._state = {
@@ -211,22 +211,14 @@ class TutorEngine:
 
         pending = self._pending_question()
         topic = self._topics[pending.topic_id] if pending else self._current_topic()
-        mastery = get_mastery(self.db, self.student.id, topic.id)
         transcript = "\n".join(
             f"{m.role.upper()}: {m.content[:600]}" for m in self.s.messages[-8:] if m.kind != "info"
         )
-        reply = self.llm.generate(
-            system=prompts.tutor_system(self.student.grade),
-            prompt=prompts.chat_prompt(
-                describe_topic(topic),
-                describe_learner(self.student, mastery, self.lesson),
-                self._excerpt(topic),
-                transcript=transcript,
-                pending_question=pending.prompt if pending else None,
-                message=message,
-            ),
-            schema=prompts.ChatReply,
-            purpose="chat",
+        reply = self.brain.chat(
+            self._context(topic),
+            transcript=transcript,
+            pending_question=pending.prompt if pending else None,
+            message=message,
         )
         self._say("chat", reply.reply)
         if reply.student_is_confused and self.s.phase == "check" and pending is not None:
@@ -277,7 +269,7 @@ class TutorEngine:
                 ts["status"] = "needs_followup"
                 self._next_topic()
             else:
-                self._ask(topic, "check", self._difficulty(topic.id, CHECK_TARGET), prompt_kind="practice")
+                self._ask(topic, "check", self._difficulty(topic.id, CHECK_TARGET))
             return
 
         if last_strategy:
@@ -287,7 +279,7 @@ class TutorEngine:
         )
         if verdict == "partial" and not out_of_budget:
             self._feedback(q, verdict, feedback, graded_by)
-            self._ask(topic, "check", max(1, q.difficulty - 1), prompt_kind="practice")
+            self._ask(topic, "check", max(1, q.difficulty - 1))
             return
         if out_of_budget:
             self._feedback(q, verdict, feedback, graded_by)
@@ -316,18 +308,11 @@ class TutorEngine:
         ts["status"] = "learning"
         mastery = get_mastery(self.db, self.student.id, topic.id)
         difficulty = self._difficulty(topic.id, CHECK_TARGET)
-        out = self.llm.generate(
-            system=prompts.tutor_system(self.student.grade),
-            prompt=prompts.teach_prompt(
-                describe_topic(topic),
-                describe_learner(self.student, mastery, self.lesson),
-                self._excerpt(topic),
-                recap=mastery.p_known >= knowledge.MASTERED,
-                difficulty=difficulty,
-                previous=self._previous_prompts(),
-            ),
-            schema=prompts.TeachOutput,
-            purpose="teach",
+        out = self.brain.teach(
+            self._context(topic),
+            recap=mastery.p_known >= knowledge.MASTERED,
+            difficulty=difficulty,
+            previous=self._previous_prompts(),
         )
         mastery.times_taught += 1
         body = f"## {topic.title}\n\n{out.explanation}\n\n### Worked example\n\n{out.worked_example}"
@@ -347,22 +332,14 @@ class TutorEngine:
         mastery = get_mastery(self.db, self.student.id, topic.id)
         mastery.times_taught += 1
         difficulty = max(1, min(q.difficulty - 1, self._difficulty(topic.id, CHECK_TARGET)))
-        out = self.llm.generate(
-            system=prompts.tutor_system(self.student.grade),
-            prompt=prompts.reteach_prompt(
-                describe_topic(topic),
-                describe_learner(self.student, mastery, self.lesson),
-                self._excerpt(topic),
-                question=q.prompt if answer is not None else "",
-                correct_answer=q.answer,
-                student_answer=answer or "",
-                strategy=strategy,
-                difficulty=difficulty,
-                previous=self._previous_prompts(),
-                reason=reason,
-            ),
-            schema=prompts.ReteachOutput,
-            purpose="reteach",
+        out = self.brain.reteach(
+            self._context(topic),
+            missed=MissedQuestion(q.prompt, q.answer, q.qtype, q.explanation) if answer is not None else None,
+            student_answer=answer or "",
+            strategy=strategy,
+            difficulty=difficulty,
+            previous=self._previous_prompts(),
+            reason=reason,
         )
         if answer is not None:
             if out.misconception:
@@ -389,7 +366,7 @@ class TutorEngine:
                       "No hints this time - just show what you know.")
             return
         topic = self._pick_practice_topic()
-        self._ask(topic, "practice", self._difficulty(topic.id, PRACTICE_TARGET), prompt_kind="practice")
+        self._ask(topic, "practice", self._difficulty(topic.id, PRACTICE_TARGET))
 
     def _start_test(self) -> None:
         self.s.phase = "test"
@@ -402,24 +379,19 @@ class TutorEngine:
             per_topic[tids[i % len(tids)]] += 1
         sections = []
         plan: list[tuple[int, int]] = []  # (topic_id, difficulty) in paper order
-        for number, tid in enumerate(t for t in self.s.topic_ids if per_topic[t]):
-            topic = self._topics[tid]
+        for tid in (t for t in self.s.topic_ids if per_topic[t]):
             base = self._difficulty(tid, TEST_TARGET)
             levels = [max(1, min(5, base + d)) for d in ([0, -1, 1, 0, 1, -1] * 3)[: per_topic[tid]]]
             levels.sort()
             plan += [(tid, lvl) for lvl in levels]
-            block = f"<topic_{number + 1}>\n{describe_topic(topic)}\n\n<textbook_excerpt>\n{self._excerpt(topic, 0.5)}\n</textbook_excerpt>\n</topic_{number + 1}>"
-            sections.append((block, topic.title, levels))
-        paper = self.llm.generate(
-            system=prompts.tutor_system(self.student.grade),
-            prompt=prompts.test_prompt(sections, describe_learner(self.student, None, self.lesson), self._previous_prompts()),
-            schema=prompts.TestPaper,
-            purpose="test",
+            sections.append((self._context(self._topics[tid]), levels))
+        drafts = self.brain.test_paper(
+            sections, learner_desc=describe_learner(self.student, None, self.lesson), previous=self._previous_prompts()
         )
-        if not paper.questions:
+        if not drafts:
             raise SessionError("The test could not be prepared - please try again.")
         ids = []
-        for i, draft in enumerate(paper.questions[:n]):
+        for i, draft in enumerate(drafts[:n]):
             tid, lvl = plan[min(i, len(plan) - 1)]
             ids.append(self._create_question(self._topics[tid], "test", draft, lvl, present=False).id)
         self._state["test_question_ids"] = ids
@@ -447,27 +419,15 @@ class TutorEngine:
         self.s.phase = "complete"
         self.s.awaiting = "none"
         self.s.ended_at = utcnow()
-        report = build_report(self.db, self.s, self.student, self._state, self.llm, self.lesson)
+        report = build_report(self.db, self.s, self.student, self._state, self.brain, self.lesson)
         self.s.report = report
         self._say("summary", report["ai"]["message_for_student"] or "Well done today!", {"report": True})
 
     # ------------------------------------------------------------------ questions
 
-    def _ask(self, topic: Topic, phase: str, difficulty: int, prompt_kind: str) -> None:
-        mastery = get_mastery(self.db, self.student.id, topic.id)
-        out = self.llm.generate(
-            system=prompts.tutor_system(self.student.grade),
-            prompt=prompts.practice_prompt(
-                describe_topic(topic),
-                describe_learner(self.student, mastery, self.lesson),
-                self._excerpt(topic),
-                difficulty=difficulty,
-                previous=self._previous_prompts(),
-            ),
-            schema=prompts.QuestionOnly,
-            purpose=f"question_{phase}",
-        )
-        self._create_question(topic, phase, out.question, difficulty)
+    def _ask(self, topic: Topic, phase: str, difficulty: int) -> None:
+        draft = self.brain.question(self._context(topic), difficulty=difficulty, previous=self._previous_prompts())
+        self._create_question(topic, phase, draft, difficulty)
 
     def _create_question(self, topic: Topic, phase: str, draft: prompts.QuestionDraft, difficulty: int, present: bool = True) -> Question:
         qtype = draft.qtype
@@ -482,7 +442,7 @@ class TutorEngine:
                     answer = match
                 else:
                     qtype, options = "short", []
-            if qtype == "mcq":
+            if qtype == "mcq" and [o["text"] for o in options] != ["True", "False"]:
                 random.shuffle(options)
         else:
             options = []
@@ -518,22 +478,18 @@ class TutorEngine:
             if rule.verdict == "correct":
                 feedback = q.explanation
             else:
+                if rule.misconception is None and q.qtype == "numeric":
+                    rule.misconception = self._arithmetic_mistake(q, answer)
                 why = f"{rule.misconception}\n\n" if rule.misconception else ""
                 feedback = f"{why}{q.explanation}"
             return rule.verdict, rule.score, feedback, rule.misconception, "rule"
         topic = self._topics[q.topic_id]
-        ev = self.llm.generate(
-            system=prompts.tutor_system(self.student.grade),
-            prompt=prompts.evaluate_prompt(
-                describe_topic(topic),
-                question=q.prompt + ("\nOptions: " + "; ".join(o["text"] for o in q.options) if q.options else ""),
-                model_answer=q.answer,
-                acceptable=q.acceptable_answers,
-                student_answer=answer,
-                grade=self.student.grade,
-            ),
-            schema=prompts.AnswerEvaluation,
-            purpose="evaluate",
+        ev = self.brain.evaluate(
+            self._context(topic),
+            question=q.prompt + ("\nOptions: " + "; ".join(o["text"] for o in q.options) if q.options else ""),
+            model_answer=q.answer,
+            acceptable=q.acceptable_answers,
+            student_answer=answer,
         )
         score = max(0.0, min(1.0, ev.score))
         verdict = ev.verdict
@@ -583,7 +539,8 @@ class TutorEngine:
 
     def _choose_strategy(self, used: list[str]) -> str:
         stats = (self.student.learning_profile or {}).get("strategy_stats", {})
-        remaining = [s for s in prompts.STRATEGIES if s not in used] or list(prompts.STRATEGIES)
+        available = [s for s in prompts.STRATEGIES if s in self.brain.strategies]
+        remaining = [s for s in available if s not in used] or available
 
         def success_rate(s: str) -> float:  # Laplace-smoothed, so untried strategies get a fair chance
             v = stats.get(s, {})
@@ -603,7 +560,45 @@ class TutorEngine:
         self.student.learning_profile = profile
 
     def _excerpt(self, topic: Topic, scale: float = 1.0) -> str:
-        return topic_excerpt(self.db, topic, int(self.cfg.context_chars_per_topic * scale))
+        return topic_excerpt(self.db, topic, int(self.cfg.context_chars_per_topic * scale * self.brain.context_scale))
+
+    def _context(self, topic: Topic) -> TopicContext:
+        mastery = get_mastery(self.db, self.student.id, topic.id)
+        related = [t for sibling in topic.chapter.topics if sibling.id != topic.id for t in sibling.key_terms]
+        return TopicContext(
+            title=topic.title,
+            chapter_title=topic.chapter.title,
+            summary=topic.summary or "",
+            learning_objectives=list(topic.learning_objectives or []),
+            key_terms=list(topic.key_terms or []),
+            start_page=topic.start_page,
+            end_page=topic.end_page,
+            topic_desc=describe_topic(topic),
+            learner_desc=describe_learner(self.student, mastery, self.lesson),
+            excerpt=self._excerpt(topic),
+            grade=self.student.grade,
+            student_name=self.student.name,
+            lesson_notes=self.lesson.notes if self.lesson else None,
+            misconceptions=list(mastery.misconceptions or []),
+            related_terms=related,
+        )
+
+    @staticmethod
+    def _arithmetic_mistake(q: Question, answer: str) -> str | None:
+        """Name a classic calculation mistake (e.g. adding denominators) without needing any AI."""
+        from ..brain.rules import maths
+        from .grading import parse_number
+
+        expr = maths.parse_expression(q.prompt.replace("*", ""))
+        value = parse_number(answer)
+        if expr is None or value is None:
+            return None
+        try:
+            if abs(float(expr.value()) - (parse_number(q.answer) or 0)) > 1e-6:
+                return None  # the question isn't simply "work out this expression"
+        except ZeroDivisionError:
+            return None
+        return maths.diagnose(expr, value)
 
     def _previous_prompts(self) -> list[str]:
         return [q.prompt[:200] for q in self.s.questions]

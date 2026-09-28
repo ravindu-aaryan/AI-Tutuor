@@ -8,10 +8,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import lessons, sessions, students, textbooks
+from .api import lessons, sessions, settings, students, textbooks
 from .config import get_settings
 from .db import init_db
-from .llm import llm_status
+from .db import new_session
+from .runtime_settings import get_ai_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -30,12 +31,13 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    for router in (students.router, textbooks.router, lessons.router, sessions.router):
+    for router in (students.router, textbooks.router, lessons.router, sessions.router, settings.router):
         app.include_router(router, prefix="/api")
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "llm": llm_status()}
+        with new_session() as db:
+            return {"status": "ok", "provider": get_ai_settings(db).provider}
 
     # Serve the built frontend (npm run build) from the same origin when present.
     dist = get_settings().frontend_dist

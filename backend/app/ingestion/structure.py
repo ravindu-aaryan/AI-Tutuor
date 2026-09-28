@@ -18,6 +18,8 @@ HEADING_RE = re.compile(
     r"^\s*(chapter|unit|lesson|module|topic)\s+([0-9]{1,3}|[ivxlc]{1,6})\b\s*[.:\-–—]?\s*(.*)$",
     re.IGNORECASE,
 )
+# "Chapter 3 Fractions ........ 42" - a table-of-contents entry, not a heading.
+TOC_LINE_RE = re.compile(r"(\.{3,}|\u2026|\s{3,})\s*\d{1,4}\s*$")
 NON_CONTENT_RE = re.compile(
     r"^(contents|table of contents|preface|foreword|acknowledg|index|glossary|answers?|"
     r"bibliography|references|about (the|this) book|cover|title page|copyright|appendix)",
@@ -59,7 +61,10 @@ def from_headings(doc: ExtractedDocument) -> list[ChapterSpan]:
     found: dict[str, tuple[str, int]] = {}
     for page_no, text in enumerate(doc.pages, start=1):
         lines = [ln.strip() for ln in text.splitlines()]
-        matches = [(i, HEADING_RE.match(ln)) for i, ln in enumerate(lines)]
+        first = next((ln for ln in lines if ln), "")
+        if NON_CONTENT_RE.match(first):
+            continue  # contents / index pages list chapters but don't start them
+        matches = [(i, HEADING_RE.match(ln)) for i, ln in enumerate(lines) if not TOC_LINE_RE.search(ln)]
         matches = [(i, m) for i, m in matches if m]
         if len(matches) >= 3:
             continue  # a page listing many chapters is a table of contents, not a chapter start

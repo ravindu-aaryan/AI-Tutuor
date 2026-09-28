@@ -1,0 +1,45 @@
+Everyday Maths and Science
+Grade 5
+
+A sample textbook for trying out My Tutor.Contents
+Chapter 1 Fractions ........ 3
+Chapter 2 Plants ........ 6Chapter 1: Fractions
+
+1.1 What Is a Fraction
+
+A fraction shows part of a whole. When a pizza is cut into 8 equal slices and you eat 3 of them, you have eaten 3/8 of the pizza.
+
+The top number is called the numerator. It tells us how many parts we have. The bottom number is called the denominator. It tells us how many equal parts the whole is divided into.
+
+A fraction whose numerator is smaller than its denominator is called a proper fraction. For example, 2/5 and 7/10 are proper fractions. A fraction whose numerator is bigger than its denominator is called an improper fraction, like 9/4.1.2 Adding Fractions
+
+Fractions that have the same denominator are called like fractions. To add like fractions, add the numerators and keep the denominator the same.
+
+For example, 1/5 + 2/5 = 3/5. We added the numerators 1 and 2 to get 3, and the denominator stayed 5.
+
+Here is another example: 3/8 + 4/8 = 7/8.
+
+Be careful! Never add the denominators. The denominator tells you the size of the pieces, and adding fractions does not change the size of the pieces.1.3 Subtracting Fractions
+
+Subtracting like fractions works the same way. Subtract the numerators and keep the denominator the same.
+
+For example, 5/6 - 1/6 = 4/6, which simplifies to 2/3. To simplify a fraction, divide the numerator and the denominator by the same number.
+
+Exercise 1
+1. 2/7 + 3/7
+2. 9/10 - 4/10
+3. 5/12 + 6/12Chapter 2: Plants
+
+2.1 Parts of a Plant
+
+A plant has three main parts: the roots, the stem and the leaves. The roots hold the plant firmly in the soil. Roots also take in water and minerals from the soil.
+
+The stem holds the plant upright. The stem carries water from the roots to the leaves. Leaves are the parts of the plant where food is made.
+
+A flower is the part of the plant that makes seeds. New plants grow from seeds.2.2 How Plants Make Food
+
+Green plants make their own food. Photosynthesis is the process by which green plants make food using sunlight, water and carbon dioxide.
+
+Chlorophyll is the green substance in leaves that traps sunlight. Leaves take in carbon dioxide from the air through tiny holes called stomata.
+
+The food made by the leaves is a kind of sugar called glucose. During photosynthesis plants also give out oxygen, which animals and people need to breathe.

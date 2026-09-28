@@ -186,7 +186,7 @@ def test_ai_failure_rolls_back(client, tmp_path, fake_llm):
     assert r.status_code == 200
 
 
-def test_session_requires_llm(client, tmp_path, monkeypatch):
+def test_claude_mode_without_key_is_explained(client, tmp_path, monkeypatch):
     from app import llm as llm_mod
 
     student, book = setup_book(client, tmp_path)
@@ -194,8 +194,14 @@ def test_session_requires_llm(client, tmp_path, monkeypatch):
     llm_mod.set_llm(None)
     monkeypatch.setattr("app.llm.anthropic_client.credentials_available", lambda: False)
     monkeypatch.setattr(llm_mod, "_default", None)
+    monkeypatch.setattr("app.api.settings.brain_status", lambda db: {})  # don't probe Ollama from tests
+    assert client.put("/api/settings/ai", json={"provider": "claude"}).status_code == 200
     r = client.post("/api/sessions", json={"student_id": student["id"], "topic_ids": [topic["id"]]})
-    assert r.status_code == 503 and "ANTHROPIC_API_KEY" in r.json()["detail"]
+    assert r.status_code == 503 and "ANTHROPIC_API_KEY" in r.json()["detail"] and "Offline" in r.json()["detail"]
+    # The free offline tutor needs no key at all.
+    client.put("/api/settings/ai", json={"provider": "rules"})
+    r = client.post("/api/sessions", json={"student_id": student["id"], "topic_ids": [topic["id"]]})
+    assert r.status_code == 201
 
 
 def test_lesson_validation(client, tmp_path):

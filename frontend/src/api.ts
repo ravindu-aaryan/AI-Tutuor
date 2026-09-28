@@ -14,7 +14,8 @@ export interface Chapter {
 export interface Textbook {
   id: number; student_id: number; title: string; subject: string | null; grade: number | null;
   filename: string; status: "uploaded" | "processing" | "ready" | "failed"; status_detail: string | null;
-  progress: number; page_count: number; structure_source: string | null; created_at: string;
+  progress: number; page_count: number; structure_source: string | null;
+  analysis_mode: Provider | null; created_at: string;
 }
 export interface TextbookDetail extends Textbook { chapters: Chapter[] }
 
@@ -90,7 +91,13 @@ export interface RevisionItem {
   next_review_at: string | null; reason: string; misconceptions: string[]; priority: number;
 }
 export interface RevisionPlan { due: RevisionItem[]; upcoming: RevisionItem[]; suggested_topic_ids: number[] }
-export interface Health { status: string; llm: { configured: boolean; model: string } }
+export type Provider = "rules" | "local" | "claude";
+export interface Health { status: string; provider: Provider }
+export interface AISettings { provider: Provider; local_url: string; local_model: string }
+export interface AIStatus {
+  settings: AISettings;
+  providers: Record<Provider, { available: boolean; detail: string }>;
+}
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -122,6 +129,8 @@ const json = (method: string, body?: unknown): RequestInit => ({
 
 export const api = {
   health: () => request<Health>("/health"),
+  aiSettings: () => request<AIStatus>("/settings/ai"),
+  saveAiSettings: (body: AISettings) => request<AIStatus>("/settings/ai", json("PUT", body)),
 
   students: () => request<Student[]>("/students"),
   createStudent: (name: string, grade: number) => request<Student>("/students", json("POST", { name, grade })),

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { api, type Health, type Student } from "./api";
+import { api, type Provider, type Student } from "./api";
 import { ErrorBanner, Spinner } from "./components/ui";
 import { StudentContext } from "./student";
 import HomePage from "./pages/HomePage";
@@ -10,8 +10,15 @@ import LessonPage from "./pages/LessonPage";
 import SessionPage from "./pages/SessionPage";
 import ProgressPage from "./pages/ProgressPage";
 import StudentSetup from "./pages/StudentSetup";
+import SettingsPage from "./pages/SettingsPage";
 
 const STORAGE_KEY = "tutor.studentId";
+
+export const MODE_LABEL: Record<Provider, string> = {
+  rules: "🔌 Offline",
+  local: "💻 Local AI",
+  claude: "✨ Claude",
+};
 
 function readStoredId(): number | null {
   try {
@@ -25,13 +32,13 @@ function readStoredId(): number | null {
 export default function App() {
   const [students, setStudents] = useState<Student[] | null>(null);
   const [studentId, setStudentId] = useState<number | null>(readStoredId);
-  const [health, setHealth] = useState<Health | null>(null);
+  const [provider, setProvider] = useState<Provider | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     api.students().then(setStudents).catch((e) => setError(e.message));
-    api.health().then(setHealth).catch(() => undefined);
+    api.health().then((h) => setProvider(h.provider)).catch(() => undefined);
   }, []);
 
   const choose = (id: number) => {
@@ -71,7 +78,13 @@ export default function App() {
           <NavLink to="/lesson">Today's lesson</NavLink>
           <NavLink to="/library">Textbooks</NavLink>
           <NavLink to="/progress">Progress</NavLink>
+          <NavLink to="/settings">Settings</NavLink>
         </nav>
+        {provider && (
+          <NavLink to="/settings" className={`mode mode-${provider}`} title="Tutor mode - change in Settings">
+            {MODE_LABEL[provider]}
+          </NavLink>
+        )}
         <div className="who">
           <select
             value={student.id}
@@ -87,11 +100,6 @@ export default function App() {
           </select>
         </div>
       </header>
-      {health && !health.llm.configured && (
-        <div className="page">
-          <ErrorBanner error="The AI tutor isn't connected: set ANTHROPIC_API_KEY on the server and restart it. Textbooks can't be analysed and lessons can't start until then." />
-        </div>
-      )}
       <main className="page">
         <Routes>
           <Route path="/" element={<HomePage />} />
@@ -100,6 +108,7 @@ export default function App() {
           <Route path="/lesson" element={<LessonPage />} />
           <Route path="/session/:id" element={<SessionPage />} />
           <Route path="/progress" element={<ProgressPage />} />
+          <Route path="/settings" element={<SettingsPage onSaved={setProvider} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

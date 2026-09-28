@@ -44,7 +44,27 @@ def init_db(url: str | None = None) -> Engine:
     from . import models  # noqa: F401  - register tables
 
     Base.metadata.create_all(_engine)
+    _add_missing_columns(_engine)
     return _engine
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """Minimal forward migration: add columns introduced after a database was created (nullable ones only).
+
+    Full schema migrations (Alembic) are still to come; this keeps existing local databases working meanwhile.
+    """
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name not in existing and col.nullable:
+                    ddl = col.type.compile(dialect=engine.dialect)
+                    conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {ddl}'))
 
 
 def new_session() -> Session:

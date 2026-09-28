@@ -7,11 +7,9 @@ from pathlib import Path
 
 from sqlalchemy import delete
 
-from ..config import get_settings
 from ..db import new_session
-from ..llm import LLMError, get_llm
+from ..llm import LLMError
 from ..models import Chapter, TextChunk, Textbook, Topic
-from .curriculum import analyze_chapter, book_overview, segment_with_ai
 from .extract import ExtractionError, extract
 from .structure import detect_chapters
 
@@ -43,7 +41,6 @@ def process_textbook(textbook_id: int) -> None:
 
 
 def _process(textbook_id: int) -> None:
-    settings = get_settings()
     with new_session() as db:
         tb = db.get(Textbook, textbook_id)
         if tb is None:
@@ -65,16 +62,19 @@ def _process(textbook_id: int) -> None:
         tb.page_count = doc.page_count
         db.commit()
 
-    llm = get_llm()
+    from ..brain import get_curriculum_brain
+
+    with new_session() as db:
+        brain = get_curriculum_brain(db)
     _set_status(textbook_id, "processing", "Finding the chapters", 0.08)
     spans, source = detect_chapters(doc)
     if not spans:
-        spans = segment_with_ai(llm, doc, settings.llm_effort_analysis)
-        source = "ai"
+        spans = brain.segment(doc)
+        source = "ai" if brain.name != "rules" else "rules"
     if not spans:
         raise ExtractionError("Could not find any chapters or sections in this book.")
 
-    overview = book_overview(llm, doc, spans, filename)
+    overview = brain.overview(doc, spans, filename)
     subject = known_subject or overview.subject
     grade = known_grade or overview.grade
     with new_session() as db:
@@ -85,6 +85,7 @@ def _process(textbook_id: int) -> None:
         if not known_title or known_title == Path(filename).stem:
             tb.title = overview.title or doc.metadata_title or known_title
         tb.structure_source = source
+        tb.analysis_mode = brain.name
         db.commit()
 
     for i, span in enumerate(spans, start=1):
@@ -94,15 +95,7 @@ def _process(textbook_id: int) -> None:
             f"Understanding chapter {i} of {len(spans)}: {span.title}",
             0.1 + 0.88 * (i - 1) / len(spans),
         )
-        analysis = analyze_chapter(
-            llm,
-            doc,
-            span,
-            subject=subject,
-            grade=grade,
-            max_chars=settings.context_chars_per_chapter,
-            effort=settings.llm_effort_analysis,
-        )
+        analysis = brain.analyze_chapter(doc, span, subject=subject, grade=grade)
         with new_session() as db:
             chapter = Chapter(
                 textbook_id=textbook_id,

@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db
-from ..llm import LLMClient, LLMError
+from ..brain import TutorBrain
+from ..llm import LLMError
 from ..models import Attempt, Chapter, DailyLesson, Question, Textbook, Topic, TutorSession
 from ..schemas import (
     AnswerIn,
@@ -20,7 +21,7 @@ from ..schemas import (
     TopicProgress,
 )
 from ..tutor.engine import SessionError, TutorEngine, get_mastery
-from .deps import require_llm
+from .deps import require_brain
 from .students import load_student
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -100,13 +101,16 @@ def _load(db: Session, session_id: int) -> TutorSession:
     return s
 
 
-def _engine(db: Session, session_id: int, llm: LLMClient) -> tuple[TutorSession, TutorEngine]:
+def _engine(db: Session, session_id: int, brain: TutorBrain) -> tuple[TutorSession, TutorEngine]:
     s = _load(db, session_id)
-    return s, TutorEngine(db, s, llm, get_settings())
+    engine = TutorEngine(db, s, brain, get_settings())
+    if len(engine._topics) != len(s.topic_ids):
+        raise HTTPException(409, "This session's textbook was re-analysed since it started. Please start a new session.")
+    return s, engine
 
 
 @router.post("", response_model=SessionOut, status_code=201)
-def start_session(body: SessionCreate, db: Session = Depends(get_db), llm: LLMClient = Depends(require_llm)):
+def start_session(body: SessionCreate, db: Session = Depends(get_db), brain: TutorBrain = Depends(require_brain)):
     student = load_student(db, body.student_id)
     lesson = None
     if body.lesson_id is not None:
@@ -134,7 +138,7 @@ def start_session(body: SessionCreate, db: Session = Depends(get_db), llm: LLMCl
 
     def create() -> None:
         holder["engine"] = TutorEngine.create(
-            db, llm, get_settings(), student=student, topic_ids=topic_ids, lesson=lesson, mode=body.mode
+            db, brain, get_settings(), student=student, topic_ids=topic_ids, lesson=lesson, mode=body.mode
         )
 
     _run(db, create)
@@ -167,35 +171,35 @@ def get_session(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{session_id}/answer", response_model=SessionOut)
-def answer(session_id: int, body: AnswerIn, db: Session = Depends(get_db), llm: LLMClient = Depends(require_llm)):
-    s, engine = _engine(db, session_id, llm)
+def answer(session_id: int, body: AnswerIn, db: Session = Depends(get_db), brain: TutorBrain = Depends(require_brain)):
+    s, engine = _engine(db, session_id, brain)
     _run(db, lambda: engine.answer(body.question_id, body.answer))
     return session_view(db, s)
 
 
 @router.post("/{session_id}/hint", response_model=SessionOut)
-def hint(session_id: int, body: HintIn, db: Session = Depends(get_db), llm: LLMClient = Depends(require_llm)):
-    s, engine = _engine(db, session_id, llm)
+def hint(session_id: int, body: HintIn, db: Session = Depends(get_db), brain: TutorBrain = Depends(require_brain)):
+    s, engine = _engine(db, session_id, brain)
     _run(db, lambda: engine.hint(body.question_id))
     return session_view(db, s)
 
 
 @router.post("/{session_id}/chat", response_model=SessionOut)
-def chat(session_id: int, body: ChatIn, db: Session = Depends(get_db), llm: LLMClient = Depends(require_llm)):
-    s, engine = _engine(db, session_id, llm)
+def chat(session_id: int, body: ChatIn, db: Session = Depends(get_db), brain: TutorBrain = Depends(require_brain)):
+    s, engine = _engine(db, session_id, brain)
     _run(db, lambda: engine.chat(body.text))
     return session_view(db, s)
 
 
 @router.post("/{session_id}/advance", response_model=SessionOut)
-def advance(session_id: int, db: Session = Depends(get_db), llm: LLMClient = Depends(require_llm)):
-    s, engine = _engine(db, session_id, llm)
+def advance(session_id: int, db: Session = Depends(get_db), brain: TutorBrain = Depends(require_brain)):
+    s, engine = _engine(db, session_id, brain)
     _run(db, engine.advance)
     return session_view(db, s)
 
 
 @router.post("/{session_id}/skip-to-test", response_model=SessionOut)
-def skip_to_test(session_id: int, db: Session = Depends(get_db), llm: LLMClient = Depends(require_llm)):
-    s, engine = _engine(db, session_id, llm)
+def skip_to_test(session_id: int, db: Session = Depends(get_db), brain: TutorBrain = Depends(require_brain)):
+    s, engine = _engine(db, session_id, brain)
     _run(db, engine.skip_to_test)
     return session_view(db, s)

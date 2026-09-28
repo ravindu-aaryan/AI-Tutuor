@@ -1,10 +1,16 @@
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
+from sqlalchemy.orm import Session
 
-from ..llm import LLMClient, LLMNotConfigured, get_llm
+from ..brain import TutorBrain, get_tutor_brain
+from ..db import get_db
+from ..llm import LLMNotConfigured
 
 
-def require_llm() -> LLMClient:
+def require_brain(db: Session = Depends(get_db)) -> TutorBrain:
     try:
-        return get_llm()
+        return get_tutor_brain(db)
     except LLMNotConfigured as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=503,
+            detail=f"{exc} Or switch the tutor to 'Offline' or 'Local AI' in Settings.",
+        ) from exc
